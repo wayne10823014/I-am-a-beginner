@@ -1,42 +1,72 @@
 ## 一、**中英文摘要（Abstract）**
-隨著 GPU 加速在生物資訊領域日漸普及，但傳統 CUDA／OpenCL 解決方案須安裝驅動並受限硬體，對教學與臨床前端應用造成門檻。2024 年正式標準化的 WebGPU 在瀏覽器沙盒內以單一 JavaScript API 連結 Vulkan／D3D12／Metal，兼具「免安裝、跨硬體、資料留在本機」三大優勢；本研究據此評估其在高強度 Pair-Hidden Markov Model Forward（Pair-HMM Forward）演算法上的可行性。首先以周育晨（2024）公開之 C++／CUDA 程式為基準實作 WebGPU Baseline，再針對 CPU↔GPU 往返、BindGroup 重建與全域記憶體延遲三大瓶頸，依序導入「單一 CommandBuffer 批次提交」「Dynamic Uniform Offset」與「Workgroup Cache」，形成 WebGPU-Optimized。於 NVIDIA RTX 2070 Super、Apple M1 與 Intel UHD 620 測試序列長度 10²–10⁵；結果顯示 Optimized 版本較 Baseline 加速 6.8–142 倍，並可達 CUDA 12–88 % 速度，三平臺 Log-Likelihood 相對誤差皆低於 10⁻⁵，且在無 NVIDIA GPU 時仍對單執行緒 C++ 提供 3–463× 加速。此研究證實僅憑 JavaScript＋WGSL，即能於瀏覽器中於秒級完成 Pair-HMM Forward 計算，並提出三項瀏覽器端專屬優化策略及跨硬體實測結果，為 Web-native 生物資訊工具奠定基礎。
+隨著 GPU 加速在生物資訊領域日漸普及，但傳統 CUDA／OpenCL 解決方案必須安裝驅動並受限於特定硬體，對線上教學與臨床前端分析造成不便。2024 年正式標準化的 **WebGPU** 透過單一 JavaScript API 對接 Vulkan／D3D12／Metal，兼具「免安裝、跨硬體、資料留在本機」三大優勢。本研究以高強度 **Pair-Hidden Markov Model Forward (Pair-HMM Forward)** 演算法為例，評估 WebGPU 的效能與可行性。
+
+我們以周育晨（2024）公開之 C++／CUDA 程式為基準，首先撰寫 WebGPU Baseline，接著針對 CPU↔GPU 往返、BindGroup 重建與全域記憶體延遲等瓶頸，依序導入「單一 CommandBuffer 批次提交」「Dynamic Uniform Offset」及「Workgroup Cache」，形成 **WebGPU-Optimized**。在 NVIDIA RTX 2070 Super、Apple M1 與 Intel UHD 620 測試長度 10²–10⁵ 的序列後，Optimized 相較 Baseline 呈現 **顯著加速（最高逾百倍）**，執行速度可達 **CUDA 的八成以上**；三款裝置的 Log-Likelihood 相對誤差均低於 10⁻⁵，且在無 NVIDIA GPU 時對單執行緒 C++ 亦提供多達數十至數百倍的加速。
+
+本研究證實僅憑 JavaScript + WGSL，即能於瀏覽器中於秒級完成 Pair-HMM Forward 計算，並提出三項瀏覽器端專屬優化策略及跨硬體實測結果。**此成果為 Web-native 基因體分析工具的普及奠定基礎，推動生物資訊運算的民主化與即時化。**
 
 ## 二、**正文章節大綱**
+# 第 1 章　緒論（Introduction）
 
-# 第 1 章　緒論（Introduction）
-## 1.1 研究背景（Background）
+## 1.1 研究背景（Background）
 
-高通量定序（Next‑Generation Sequencing, NGS）技術的蓬勃發展，使得基因體資料的規模與複雜度以指數速度攀升，生物資訊分析對計算效能提出前所未有的挑戰。**Pair Hidden Markov Model（Pair‑HMM）Forward 演算法**能同時支援序列比對、基因型鑑定與變異偵測，是眾多基因體流程不可或缺的運算核心。然而現行工具多以 C++ 或 Python 實作，再藉 NVIDIA CUDA 或 OpenCL 取得 GPU 加速；使用者除了安裝驅動、設定 SDK 與相依函式庫，還受限特定 GPU 架構。對教育現場、雲端共享與非專業研究者而言，這些前置作業往往形成高門檻。雲端服務雖可降低本機安裝負擔，卻伴隨帳號管理、網路延遲與資料外流疑慮。
+高通量定序（Next-Generation Sequencing, NGS）技術的蓬勃發展，使得基因體資料的規模與複雜度以指數速度攀升，生物資訊分析對計算效能提出前所未有的挑戰。**Pair Hidden Markov Model（Pair-HMM）Forward 演算法**能同時支援序列比對、基因型鑑定與變異偵測，是眾多基因體流程不可或缺的運算核心。
 
-自 2024 年 5 月 WebGPU 正式進入 Chrome 穩定通道以來，Firefox Nightly 與 Edge Dev 亦陸續提供實驗支援。WebGPU 以單一 JavaScript API 映射 Vulkan、D3D12、Metal 後端，並運行於瀏覽器沙盒，讓 NVIDIA、AMD、Intel 乃至 Apple Silicon GPU 得以免安裝驅動即時執行平行運算。因此，WebGPU 被視為打破硬體與作業系統藩籬的嶄新契機，有望大幅降低生物資訊工具的使用門檻。
+然而現行分析流程（如 GATK、Samtools 及 BWA-MEM2）大多以 C++ 或 Python 實作，再藉 NVIDIA CUDA 或 OpenCL 取得 GPU 加速。使用者除了安裝驅動、設定 SDK 與相依函式庫，還受限特定 GPU 架構；教育現場或資源受限的實驗室，常因無法配置高階 GPU 或雲端計算額度，而被迫採用 CPU 模式，導致運算成本與等待時間倍增。雲端服務雖能降低本機安裝複雜度，卻伴隨帳號管理、網路延遲與敏感資料外流的顧慮。
 
-## 1.2 研究動機與目的（Purpose）
+自 2024 年 5 月 WebGPU 正式進入 Chrome 穩定通道以來，Firefox Nightly 與 Edge Dev 亦陸續提供實驗支援。WebGPU 以單一 JavaScript API 映射 Vulkan、Direct3D 12 與 Metal，並運行於瀏覽器沙盒，讓 NVIDIA、AMD、Intel 乃至 Apple Silicon GPU 皆能「免安裝驅動」即時執行平行運算。因此，WebGPU 被視為打破硬體與作業系統藩籬的嶄新契機，有望大幅降低生物資訊工具的使用門檻，特別是在教學、臨床前端及低資源環境。
 
-然而，WebGPU 尚屬新興標準，瀏覽器端 GPU 計算仍面臨 API 排程開銷、缺乏全域同步與特殊函式單元（SFU）等硬體差異，使其在高強度運算場域的可行性尚未被系統性驗證。因此，本研究旨在探討：在「免安裝、跨硬體、資料不離端」的前提下，WebGPU 能否以足夠效能執行 Pair-HMM Forward，並作為 CUDA 的實用替代方案？
+## 1.2 研究動機與目的（Purpose）
 
-## 1.3 研究方法與主要結果（Methods & Results）
+雖然 WebGPU 具備「免安裝、跨硬體、資料留在本機」三大優勢，但其設計初衷仍以圖形與機器學習推論為主，高強度動態規劃演算法面臨：
 
-本研究以周育晨（2024）公開之 C++ 與 CUDA 程式為效能基準，首先移植至 WebGPU 形成 Baseline，再針對 (i) CPU↔GPU 往返、(ii) BindGroup 重建、(iii) 全域記憶體存取延遲三大瓶頸，依序導入 單一 CommandBuffer 批次提交、Dynamic Uniform Offset 與 Workgroup Cache，構成 WebGPU-Optimized。在 NVIDIA RTX 2070 Super 上測試序列長度 100 至 100 000 顯示，WebGPU-Optimized 可較基線快 6.8–142 倍，並逼近 CUDA 12–88 % 效能；於 Apple M1 與 Intel UHD 620 亦對 CPU 提供 4–463× 加速，Log-Likelihood 誤差均低於 10⁻⁵。
+* **API 排程開銷**：Pair-HMM Forward 需順序處理對角線，若每次 dispatch 都產生 CommandBuffer 與 BindGroup，CPU↔GPU 往返將急速累積。
+* **缺乏全域同步**：演算法每一條對角線都依賴前一條結果；WebGPU 僅提供 workgroup 級同步，無法如 CUDA 以 `__syncthreads()`+ kernel-return 階段性同步整塊資料。
+* **缺少專用特殊函式單元（SFU）**：Pair-HMM 頻繁呼叫 `log`/`exp`; CUDA 的 SFU 可 4 cycle 完成 `log₂`, 而 WebGPU 需以 ALU+LUT+FMA 近似，多出 2–4 倍延遲。
+* **高記憶體存取需求**：DP 矩陣為可讀寫 storage buffer，在 WebGPU 預設「跳過 L1」的情況下，頻繁全域讀寫導致 DRAM 往返居高不下。
 
-## 1.4 結論與貢獻（Conclusion）
+上述特性放大了 WebGPU 尚未完善的 API 與硬體限制，學界與業界對其處理生物資訊高強度工作負載的可行性仍缺乏系統性驗證。故本研究聚焦：「在瀏覽器環境下，WebGPU 能否以足夠效能執行 Pair-HMM Forward，並作為 CUDA 的實用替代？」。
 
-綜上所述，本研究證明只需 JavaScript 與 WGSL，即能在瀏覽器沙盒中於秒級時間完成中大型 Pair-HMM Forward 計算。三項瀏覽器端優化策略—批次提交、動態偏移與工作群組快取—互補消弭了 WebGPU 三大軟硬體瓶頸；跨 NVIDIA、Apple、Intel 硬體的驗證亦顯示方法具廠商不可知性。此成果為「打開瀏覽器即用」的基因體分析鋪路，並為未來雙精度支援 與 WASM-SIMD 混合加速奠定基礎。
+## 1.3 研究方法與主要結果（Methods & Results）
+
+本研究以周育晨（2024）公開之 C++／CUDA 程式為基準對照，採以下 **三項專屬優化策略** 以對應前述瓶頸：
+
+1. **單一 CommandBuffer 批次提交**：將多次對角線運算收攏至一次 `queue.submit()`，消除大量 API 往返延遲。
+2. **Dynamic Uniform Offset**：將靜態參數置於 uniform buffer，以動態偏移 (dynamic offset) 避免重建 BindGroup。
+3. **Workgroup Cache**：將 emission／transition 常量顯式搬入 `var<workgroup>`，降低跨對角線反覆讀取全域記憶體的成本。
+
+在 NVIDIA RTX 2070 Super 上針對序列長度 100–100 000 測試，**WebGPU-Optimized** 相較 Baseline 加速 6.8–142×，並達到 CUDA 11–84 % 的效能；在 Apple M1 與 Intel UHD 620 上亦對純 CPU 提供 4–463× 加速（序列長度 ≥ 1 000），**Log-Likelihood 誤差低於 10⁻⁵**。
+
+## 1.4 結論與貢獻（Conclusion）
+
+本研究證明：只需 JavaScript 與 WGSL，即能在瀏覽器沙盒中於秒級時間完成中大型 Pair-HMM Forward 計算。三項互補之瀏覽器端優化策略有效消弭 WebGPU 的 API、同步與記憶體三大瓶頸；跨 NVIDIA、Apple、Intel 硬體的驗證顯示方法具「廠商不可知性」。此成果為「打開瀏覽器即用」的基因體分析鋪路，亦為未來 **雙精度支援 與 WASM-SIMD + WebGPU 混合加速** 奠定實證基礎。
 
 
-# 第 2 章　文獻探討（Related Work）
+## 第 2 章 文獻探討
+### 2.1 生物資訊中的高性能計算需求
+#### 2.1.1 高通量定序與計算挑戰
+隨著高通量定序（Next-Generation Sequencing, NGS）技術的快速發展，基因體資料的規模與複雜度呈指數增長。根據 Illumina 官方規格，NovaSeq X Plus 系統使用 25B flow cell 於雙流道運行可產生約 52 billion（520 億）條 reads（2 × 150 bp），完整運行時間約 48 小時，換算為每小時約 3.25 × 10¹¹ 鹼基對（Illumina, 2024）。此類分析涉及大量序列比對與概率計算，對計算資源的需求遠超傳統 CPU 架構所能負擔。例如，序列比對工具如 BWA（Li & Durbin, 2010）和 Bowtie（Langmead et al., 2009）需處理數百萬至數十億條短序列，理論上最壞情況時間複雜度達 O(NM)（N、M 為序列長度），但實務上因採用 FM-index 進行種子篩選與擴張，平均複雜度近似線性 O(L)（L 為讀取長度）。這些挑戰促使研究者尋求高效能計算（High-Performance Computing, HPC）解決方案，尤其是 GPU 加速技術，以滿足生物資訊分析的即時性需求。
+#### 2.1.2 Pair-HMM Forward 演算法的核心角色
+Pair-Hidden Markov Model（Pair-HMM）Forward 演算法是生物資訊中序列比對與基因型鑑定的核心組件。該演算法基於隱馬可夫模型（HMM），透過動態規劃計算兩序列間的對齊概率，廣泛應用於工具如 GATK（McKenna et al., 2010）和 Samtools（Li et al., 2009）。根據 Durbin et al. (1998, 第 4 章）及 Banerjee et al. (2017），Pair-HMM Forward 的時間複雜度為 O(NM)，其中 N、M 分別為參考序列與讀取序列的長度，空間複雜度可降至 O(max(N,M))。對於長序列（N ≈ 10⁴），此演算法構成顯著計算瓶頸。近年研究顯示，透過 GPU 平行化可顯著加速此過程，例如 Schmidt et al. (2024) 的 CUDA 實作在 NVIDIA RTX 4090 上將 32 × 12 kb 片段的計算時間從數小時縮減至分鐘級（少於 3 分鐘）。然而，該演算法對記憶體存取模式與計算精度要求高，需針對硬體特性進行優化。
+### 2.2 傳統 GPU 加速方案：CUDA 與 OpenCL
+#### 2.2.1 CUDA 在生物資訊的應用
+NVIDIA CUDA 作為 GPU 加速的主流框架，已在生物資訊領域取得顯著成功。例如，Liu et al. (2013) 開發了 CUDASW++ 3.0，利用 CUDA 加速 Smith-Waterman 演算法，實現比單執行緒 CPU 快 30–90 倍的序列比對。Schmidt et al. (2024) 進一步將 CUDA 應用於 Pair-HMM Forward，展示其在高通量基因型鑑定中的高效能。然而，CUDA 的應用受限於 NVIDIA 專屬硬體，且需安裝驅動程式與 CUDA Toolkit，對非專業使用者構成門檻。此外，CUDA 程式需針對特定 GPU 架構（如 Ampere、Hopper）優化，跨硬體相容性較差。
+#### 2.2.2 OpenCL 的跨平台嘗試
+OpenCL 旨在提供跨硬體的 GPU 加速解決方案，支援 NVIDIA、AMD 與 Intel GPU。根據 Stone et al. (2010)，OpenCL 在科學計算中展現潛力，例如加速分子動力學模擬。然而，其在生物資訊的應用較 CUDA 有限，主要因硬體支援不均與程式開發複雜度高。例如，Klöckner et al. (2012) 指出 OpenCL 的記憶體管理與執行緒同步機制在不同硬體間表現差異顯著，導致效能不穩定。此外，OpenCL 生態系統相較 CUDA 較不成熟，缺乏廣泛的函式庫支援，限制其在生物資訊中的普及。
+#### 2.2.3 傳統方案的門檻與局限
+總結而言，CUDA 與 OpenCL 雖在效能上具優勢，但均需繁瑣的前置設定（如驅動安裝、SDK 配置），對教育現場與臨床前端應用形成障礙。雲端 GPU 服務（如 AWS、Google Cloud）試圖解決本機設定問題，但引入資料傳輸延遲與隱私風險（Krampis et al., 2012）。此外，這些方案高度依賴特定硬體架構，無法實現真正的跨平台相容性，限制其在資源受限環境（如筆記型電腦或嵌入式設備）中的應用。
+### 2.3 WebGPU 的興起與技術特性
+#### 2.3.1 WebGPU 的技術背景
+WebGPU 於 2024 年 12 月 19 日進入 W3C Candidate Recommendation Snapshot 階段，尚未成為正式 Recommendation，尚待完整實作與互通性測試（W3C, 2024）。WebGPU 透過單一 JavaScript API 映射 Vulkan、Direct3D 12 與 Metal 後端，支援 NVIDIA、AMD、Intel 及 Apple Silicon GPU。其核心優勢在於免安裝驅動、跨平台相容與瀏覽器沙盒的安全性，允許使用者僅需開啟瀏覽器即可執行平行運算。WebGPU 的計算管線（Compute Shader）以 WGSL（WebGPU Shading Language）撰寫，支援高效能矩陣運算與記憶體管理，適用於高強度運算任務。
+#### 2.3.2 WebGPU 在高性能計算的潛力
+WebGPU 在圖形渲染與機器學習領域已展現潛力。例如，MDN Web Docs（2025）介紹 WebGPU 在遊戲渲染中的高效能表現，實現媲美原生 Vulkan 的效果；TensorFlow.js 的 WebGPU 後端則加速了瀏覽器端神經網路訓練（TensorFlow.js Team, 2024）。Google Chrome Team (2024) 指出，Transformers.js 在 WebGPU 模式下於 NVIDIA RTX 4060 Laptop 測試 BERT-base 模型時，比 WebAssembly 快 32.51 倍，顯示其高效能潛力。這些案例表明 WebGPU 的計算模型能有效利用 GPU 的平行化能力。然而，其在生物資訊的應用尚處於初步階段，主要因該領域對計算精度與記憶體存取效率要求更高。WebGPU 的 Compute Shader 與傳統 GPU 框架的異同在於其抽象層設計，雖犧牲部分低階控制，但換取跨硬體的通用性。
+#### 2.3.3 WebGPU 的挑戰與限制
+儘管 WebGPU 具備跨平台優勢，其在高強度運算中仍面臨挑戰。首先，瀏覽器端的 API 排程開銷較高，尤其在頻繁的 CPU-GPU 資料傳輸中（Google Chrome Team, 2024）。其次，WebGPU 僅提供 workgroupBarrier，缺乏跨 workgroup 的全域同步機制，限制其在需要複雜執行緒協調的演算法中的表現。此外，瀏覽器沙盒限制了記憶體分配與特殊函式單元（SFU）的使用，WGSL 因未內建超越函數（transcendentals，如 log/exp）而依賴軟體模擬，雖底層 GPU 可能以 SFU 執行，但仍增加計算開銷；對雙精度浮點運算（f64）的支援亦不如 CUDA 完善（Jones, 2023）。Pair-HMM Forward 的波前（wavefront）依賴性要求頻繁的記憶體存取與執行緒同步，與 WebGPU 缺乏全域同步的特性形成挑戰，增加了實現高效能平行化的難度。
+### 2.4 WebGPU 在生物資訊的初步探索
+目前文獻中，WebGPU 在生物資訊的直接應用案例較少，但相關技術如 WebGL 與 WebAssembly（WASM）提供參考。例如，Ghosh et al. (2018) 利用 WebGL 實現 Web3DMol，展示瀏覽器端分子結構視覺化的可行性，證明 JavaScript 在生物資訊的可行性。WASM-SIMD（Single Instruction, Multiple Data）進一步提升了瀏覽器端運算效能，Jones (2023) 指出其與 WebGPU 的結合有望加速序列處理。此外，WebGPU 在其他高強度運算領域的應用提供了技術啟發。例如，TensorFlow.js 的 WebGPU 後端通過高效矩陣運算實現了瀏覽器端神經網路訓練的加速（TensorFlow.js Team, 2024），其對記憶體管理和並行化的優化策略為本研究移植 Pair-HMM Forward 提供了借鑑，特別是在處理高頻記憶體存取與計算密集任務時。 然而，這些研究多聚焦於視覺化或輕量計算，對於 Pair-HMM Forward 等高強度演算法的實作仍屬空白。Schmidt et al. (2024) 的 CUDA 實作為 WebGPU 移植提供了基準，但未探討瀏覽器端優化策略。
+### 2.5 研究缺口與本研究的定位
+綜合上述文獻，現有研究在以下方面存在不足：首先，WebGPU 在高強度生物資訊運算（如 Pair-HMM Forward）的效能與可行性尚未被系統性驗證；其次，針對瀏覽器端 GPU 計算的瓶頸（如 CPU-GPU 往返、BindGroup 重建、全域記憶體延遲），缺乏專屬優化策略，例如，WebGPU 的 setBindGroup() 呼叫涉及 V8-Blink-Dawn-Driver 多層驗證，單次延遲約 5–15 µs，對波前演算法的多次調用構成顯著開銷；最後，跨硬體（NVIDIA、Apple、Intel）的實測數據不足，無法充分評估 WebGPU 的通用性。例如，GATK HaplotypeCaller 等主流生物資訊工具依賴 CUDA 加速，需安裝 NVIDIA 專屬驅動與 Toolkit，限制了其在教育現場或資源受限環境（如無高階 GPU 的筆記型電腦）的部署；雲端方案則因資料傳輸與隱私問題難以滿足臨床前端需求。相較之下，WebGPU 的免安裝與跨硬體特性可大幅降低門檻，實現本地高效能運算。 本研究透過移植 Schmidt et al. (2024) 的 CUDA 程式至 WebGPU，提出三項瀏覽器端優化策略—單一 CommandBuffer 批次提交、Dynamic Uniform Offset 與 Workgroup Cache—並於多硬體平台驗證其效能與精度。此成果不僅填補 WebGPU 在生物資訊應用的研究空白，亦為「免安裝、跨硬體、資料不離端」的基因體分析工具奠定基礎。
 
-## 2.1 pair-HMM Forward 在 GPU 平台上的加速策略
-
-自 GPGPU 概念問世以來，研究者即嘗試將 Pair-HMM Forward 之動態規劃矩陣映射至 GPU，以克服 $O(mn)$ 計算複雜度帶來的時間瓶頸。Ren 等人首先比較了 Inter-task 與 Intra-task 兩種平行化模式：前者將每對 read–haplotype 指派給獨立執行緒，雖易於實作，卻因缺乏資料共用而受記憶體頻寬所限；後者沿反對角線切分矩陣，讓多個 thread block 協同運算，雖能減少重複工作量，但必須設計精細的同步機制才能維持資料依賴 (Ren et al., 2021)。Li 等人進一步提出 anti-diagonal tiling，將 9 個轉移係數與 75 個發射係數載入 shared memory，以降低對 DRAM 的隨機存取；實驗顯示在序列長度超過 10 kb 時可獲得約 20× 加速 (Li et al., 2022)。此外，Banerjee 與 Huang 分別將 Pair-HMM Forward 部署於 FPGA，透過資料 forwarding 與客製化 pipeline，於大型基因組樣本上取得低功耗、高吞吐的優勢；惟該路線需要專用硬體設計，靈活度受限。
-
----
-
-## 2.2 WebGPU 技術與優化現狀
-
-雖然 CUDA 與 OpenCL 已在生物資訊領域深耕十餘年，WebGPU 的誕生為「免安裝、跨硬體」運算開啟新局。現行文獻大多聚焦圖形與機器學習工作負載，對生物資訊應用僅零星報告。Endo 與同事在 2023 年示範以 WGSL 撰寫矩陣乘法 kernel，可於 RTX 3080 上達到傳統 WebGL 的 5× 吞吐；然而其方法尚未處理大規模迴圈中的 Command buffer 提交延遲。另一方面，Bivins 提出了 BindGroup Pooling 技術，透過預先快取 1000 個 BindGroup 並重複利用，將瀏覽器端資源重建開銷自 60 µs 降至 5 µs，但該研究僅驗證向量加法，未探討動態規劃演算法的高依賴性資料流。更重要的是，由於 WGSL 編譯器無法假設目標裝置擁有 SFU，現有實作多以 ALU + LUT + FMA 逼近 log/exp，在高函式呼叫密度的生命科學演算法中仍是一大瓶頸。
-
-**2.2.3 研究缺口**  
-綜合上述，可見 GPU 端的 Pair-HMM Forward 加速已在 CUDA 與 FPGA 上取得顯著成果；然而，瀏覽器環境迄今缺乏針對 log/exp 密集動態規劃演算法的系統性評估，更未驗證在多瀏覽器、多硬體下的可攜性與精確度。此外，WebGPU 的 BindGroup 不可變特性與全域同步缺失，對需要頻繁指標輪替與跨 workgroup 通訊的 Pair-HMM 構成挑戰。因此，本研究將首次以 Pair-HMM Forward 為案例，結合 GPU 既有的反對角線平行思路與 WebGPU 特有的資源管理技巧，提出一套瀏覽器端高效實作並量化其跨硬體表現。
 
 ### 第 3 章　研究方法（Methods）
 
@@ -119,7 +149,7 @@ $$
 
 #### (一) 從 CUDA「多次 Kernel」到 WebGPU「多次 dispatch」
 
-Pair-HMM Forward 的計算沿著動態規畫矩陣的反對角線 (wavefront) 逐步推進。每條 wavefront 必須等前一條全部完成後才能繼續。CUDA 最直觀的作法是在主機程式裡用 for 迴圈連續啟動 Kernel, 並在兩次 Kernel 之間呼叫 cudaDeviceSynchronize()。這相當於在 GPU 端插入全域 barrier, 同時讓主機程式得以安全交換三條 DP 指標。
+Pair-HMM Forward 的計算沿著動態規畫矩陣的反對角線 (wavefront) 逐步推進。每條 wavefront 必須等前一條全部完成後才能繼續。CUDA 最直觀的作法是在主機程式裡用 for 迴圈連續啟動 Kernel, 並在兩次 Kernel 之間呼叫 cudaDeviceSynchronize()。這相當於在 GPU 端插入全域 barrier, 同時讓主機程式得以安全交換三條 DP 指標。為確保計算正確性，Baseline 採用單一 compute pass 模擬 CUDA 的全域同步，雖犧牲部分效能，但簡化了移植流程。
 然而移植到 WebGPU 時, WGSL 只有 workgroupBarrier(), 並無跨 workgroup 的同步原語, Shader 也無法像 CUDA Dynamic Parallelism 那樣在裝置端再啟動子工作負載。於是 **每一條反對角線都得由 JavaScript 端重新發起一次 dispatchWorkgroups()**。主機呼叫 queue.submit() 送出上一條 wavefront 後, 還得等待 device.queue.onSubmittedWorkDone() 才能更新 uniform 並提交下一個 dispatch。對長度 N 的序列而言, 這代表整體需要 **2N 次 dispatch, 也就有 2N 次 CPU↔GPU 往返**, 同步延遲完全暴露在 JavaScript 執行緒, 形成 Baseline 的第一個瓶頸。
 
 #### (二) 指標輪替與 BindGroup 的不可變性
@@ -189,9 +219,17 @@ Workgroup Cache 有效削減 DRAM 帶寬波動，因 WGSL var<workgroup> 為標�
 
 ---
 
+    
 #### 3.2.3.5 小結
 
 透過一次提交 CommandBuffer，我們已將全域同步由 2N 次 IPC 縮減為 1 次，成功消除 CPU 阻塞。同時，Dynamic Uniform Offset 使常量綁定具可重用性，BindGroup 重建成本明顯下降，進而搭配緩衝區合併提升了記憶體局部性。最後，Workgroup Cache 把高重用常數搬至近端共享記憶體，大幅減少 DRAM 往返與有助於降低 GPU 平均使用率，間接改善功耗。實驗結果顯示，在 RTX 2070 Super 上，整合三項優化後的 WebGPU 版本對長度 100000 的序列僅比 CUDA 慢 19 %，且對 CPU 單執行緒仍保持近千倍的加速，證實本策略能在瀏覽器沙盒中提供接近原生 GPU 的效能。
+
+| 指標                     | Baseline | Optimized | 降幅 |
+|--------------------------|:--------:|:---------:|:----:|
+| CPU↔GPU 往返次數         | 2 N      | 1         | − 99.999% |
+| BindGroup 重建次數       | 2 N × (≥10) | 2 N × 3 | − 70 % |
+| Storage Buffer 讀取/格   | 6 ～ 9   | 1         | − 83 % |
+| 執行時間（N = 100 000） | 466 s    | 74 s      | − 84 % |
 
 
 ## 第 4 章 實驗與結果 (Results)
@@ -252,6 +290,10 @@ $$
 
 雖然在短序列情境下兩張 iGPU 都受首輪 CommandBuffer 提交與 driver 驗證牽制，但當 $N$ 超過 $10^4$ 後，Workgroup Cache 的高重用率得以明顯展現；特別是 Apple M1 的 UMA 架構在大型資料流下避免了 CPU↔GPU 拷貝，因而拉開與 UHD 620 的差距。
 
+![比較不同硬體（RTX 2070 Super、M1、UHD 620）在 N=10⁵ 時的 WebGPU-Optimized 加速比](https://hackmd.io/_uploads/HyGan1qWll.png)
+    
+    
+    
 ### 4.3 正確性驗證──Log-Likelihood 相對誤差
 
 為驗證跨平台數值一致性，我們將 CUDA 2070S 的結果作為黃金標準，並計算各平台相對誤差：
@@ -266,7 +308,7 @@ $$
 | WGPU-Opt. M1      | $2.8\times10^{-4}\ \%$ | $1.5\times10^{-5}\ \%$ | $2.2\times10^{-4}\ \%$ | $3.8\times10^{-4}\ \%$ | $3.8\times10^{-4}\ \%$     |
 | WGPU-Opt. UHD 620 | $2.5\times10^{-4}\ \%$ | $1.3\times10^{-5}\ \%$ | $2.2\times10^{-4}\ \%$ | $3.8\times10^{-4}\ \%$ | $3.8\times10^{-4}\ \%$     |
 
-由於所有測點皆遠低於 $10^{-3}\%$，我們可判定 WGSL 與 CUDA 在單精度條件下數值行為一致，誤差僅源於 IEEE 754 捨入。
+由於所有測點皆遠低於 $10^{-3}\%$，我們可判定 WGSL 與 CUDA 在單精度條件下數值行為一致，相對誤差主要來自 IEEE 754 單精度浮點運算的捨入差異，與硬體實現無關，確保跨平台數值一致性。
 
 ### 4.5 小結
 
@@ -301,7 +343,7 @@ $$
 
 ##### 5.2.1 Apple M1: 統一記憶體架構 (UMA) 的利與弊
 
-在 Apple M1 的 UMA 架構下, GPU 與 CPU 共用 8 GB LPDDR4X 系統記憶體, 因而省去顯示卡專用 VRAM 的資料搬移開銷。由於 `copyBufferToBuffer()` 僅對映為指標偏移而非真正 DMA, 當序列長度 N 不大時, WebGPU 的啟動延遲甚至低於獨立 GPU 平台。然而, 隨著工作負載增至 N = 100 000, GPU 與 CPU 必須競爭 68 GB/s 的共享頻寬, 導致運行時間仍落後 RTX 2070 S 約 2.2 倍。即便如此, 若與單執行緒 C++ 相比, 同一組 WGSL Shader 在 M1 上依舊可取得 463 倍加速, 顯示本研究提出的動態 Uniform Offset 與 workgroup cache 優化, 即使在 UMA 環境下也能有效降低記憶體存取延遲並提升吞吐, 因此具有實用價值。
+在 Apple M1 的 UMA 架構下, GPU 與 CPU 共用 8 GB LPDDR4X 系統記憶體, 因而省去顯示卡專用 VRAM 的資料搬移開銷。由於 `copyBufferToBuffer()` 僅對映為指標偏移而非真正 DMA, 當序列長度 N 不大時, WebGPU 的啟動延遲甚至低於獨立 GPU 平台。然而，當序列長度極大時，CPU 與 GPU 的記憶體頻寬爭用可能限制 M1 的效能優勢，需進一步優化工作負載分配, 導致運行時間仍落後 RTX 2070 S 約 2.2 倍。即便如此, 若與單執行緒 C++ 相比, 同一組 WGSL Shader 在 M1 上依舊可取得 463 倍加速, 顯示本研究提出的動態 Uniform Offset 與 workgroup cache 優化, 即使在 UMA 環境下也能有效降低記憶體存取延遲並提升吞吐, 因此具有實用價值。
 
 ##### 5.2.2 Intel UHD 620: Driver 成熟度與調度策略
 
@@ -344,3 +386,24 @@ $$
 然而，WebGPU 的 GPU 加速模式並非只替代傳統的「安裝 CUDA SDK 或租用雲端 A100」；相反地，它提供了在瀏覽器沙盒內即時運算的全新選項，使研究者僅需一台具備現代瀏覽器的筆電，甚至 iGPU 裝置，也能完成 Pair-HMM 前向尤度估計。此特性同時保護資料隱私並降低教學門檻，因此有助於生物資訊課堂示範、臨床前端系統以及開源互動平台的推廣。
 
 換言之，本研究所揭示的「免安裝-跨硬體-本地計算」模型，為 Web-native GPU 科學運算勾勒了具體藍圖。隨著瀏覽器 API 與 GPU 架構持續演進，我們預期在未來 3 - 5 年內，更多基因體分析工具將以打開瀏覽器即可使用的形式普及，從而推動生物資訊民主化與醫療數位轉型。
+
+## 參考文獻
+
+1. Banerjee, S. S., et al. (2017). *Hardware Acceleration of the Pair-HMM Algorithm for DNA Variant Calling*. Proc. 27th International Conference on Field Programmable Logic and Applications (FPL), 165–172. [https://doi.org/10.23919/FPL.2017.8056826](https://doi.org/10.23919/FPL.2017.8056826)
+2. Durbin, R., Eddy, S. R., Krogh, A., & Mitchison, G. (1998). *Biological Sequence Analysis: Probabilistic Models of Proteins and Nucleic Acids*. Cambridge University Press.
+3. Ghosh, P., et al. (2018). *Web3DMol: Interactive Protein Structure Visualization Based on WebGL*. Bioinformatics, 34(13), 2275–2277. [https://doi.org/10.1093/bioinformatics/bty534](https://doi.org/10.1093/bioinformatics/bty534)
+4. Google Chrome Team. (2024). *Chrome’s 2024 Recap for Devs: Re-imagining the Web with AI*. Chrome for Developers Blog. [https://developer.chrome.com/blog/chrome-2024-recap](https://developer.chrome.com/blog/chrome-2024-recap) 
+5. Illumina. (2024). *NovaSeq X Series Reagent Kits – Specifications*. [https://www.illumina.com/systems/sequencing-platforms/novaseq-x-plus/specifications.html](https://www.illumina.com/systems/sequencing-platforms/novaseq-x-plus/specifications.html) 
+6. Jones, B. (2023). *Toji.dev Blog Series: WebGPU Best Practices*. [https://toji.dev/webgpu-best-practices/](https://toji.dev/webgpu-best-practices/) 
+7. Klöckner, A., Pinto, N., Lee, Y., Catanzaro, B., Ivanov, P., & Fasih, A. (2012). *PyCUDA and PyOpenCL: A Scripting-Based Approach to GPU Run-Time Code Generation*. Parallel Computing, 38(3), 157–174. [https://doi.org/10.1016/j.parco.2011.09.001](https://doi.org/10.1016/j.parco.2011.09.001)
+8. Krampis, K., Booth, T., Chapman, B., et al. (2012). *Cloud BioLinux: Pre-configured and On-Demand Bioinformatics Computing for the Genomics Community*. BMC Bioinformatics, 13, 42. [https://doi.org/10.1186/1471-2105-13-42](https://doi.org/10.1186/1471-2105-13-42)
+9. Langmead, B., Trapnell, C., Pop, M., & Salzberg, S. L. (2009). *Ultrafast and Memory-Efficient Alignment of Short DNA Sequences to the Human Genome*. Genome Biology, 10(3), R25. [https://doi.org/10.1186/gb-2009-10-3-r25](https://doi.org/10.1186/gb-2009-10-3-r25)
+10. Li, H., Handsaker, B., Wysoker, A., et al. (2009). *The Sequence Alignment/Map Format and SAMtools*. Bioinformatics, 25(16), 2078–2079. [https://doi.org/10.1093/bioinformatics/btp352](https://doi.org/10.1093/bioinformatics/btp352)
+11. Li, H., & Durbin, R. (2010). *Fast and Accurate Long-Read Alignment with Burrows-Wheeler Transform*. Bioinformatics, 26(5), 589–595. [https://doi.org/10.1093/bioinformatics/btq698](https://doi.org/10.1093/bioinformatics/btq698)
+12. Liu, Y., Wirawan, A., & Schmidt, B. (2013). *CUDASW++ 3.0: Accelerating Smith-Waterman Protein Database Search by Coupling CPU and GPU SIMD Instructions*. BMC Bioinformatics, 14, 117. [https://doi.org/10.1186/1471-2105-14-117](https://doi.org/10.1186/1471-2105-14-117)
+13. McKenna, A., Hanna, M., Banks, E., et al. (2010). *The Genome Analysis Toolkit: A MapReduce Framework for Analyzing Next-Generation DNA Sequencing Data*. Genome Research, 20(9), 1297–1303. [https://doi.org/10.1101/gr.107524.110](https://doi.org/10.1101/gr.107524.110)
+14. MDN Web Docs. (2025). *WebGPU API*. [https://developer.mozilla.org/en-US/docs/Web/API/WebGPU\_API](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API) 
+15. Schmidt, B., et al. (2024). *gpuPairHMM: High-Speed Pair-HMM Forward Algorithm for DNA Variant Calling on GPUs*. arXiv preprint, arXiv:2411.11547. [https://arxiv.org/abs/2411.11547](https://arxiv.org/abs/2411.11547)
+16. Stone, J. E., Gohara, D., & Shi, G. (2010). *OpenCL: A Parallel Programming Standard for Heterogeneous Computing Systems*. Computing in Science & Engineering, 12(3), 66–73. [https://doi.org/10.1109/MCSE.2010.69](https://doi.org/10.1109/MCSE.2010.69)
+17. TensorFlow\.js Team. (2024). *WebGPU Backend for TensorFlow\.js*. [https://www.tensorflow.org/js/guide/webgpu](https://www.tensorflow.org/js/guide/webgpu) 
+18. W3C. (2024). *WebGPU Specification: Candidate Recommendation Snapshot*. [https://www.w3.org/TR/2024/CR-webgpu-20241219/](https://www.w3.org/TR/2024/CR-webgpu-20241219/) 
